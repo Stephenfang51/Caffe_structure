@@ -76,10 +76,10 @@ protected:
     vector<int> output_shape_;
     const vector<int>* bottom_shape_;
 
-    int num_spatial_axes_;
+    int num_spatial_axes_; //空间轴的数量 H and W就是2个
     int bottom_dim_; // 输入度维度 = 输入图像通道数*输入图像的h*输入图像w
     int top_dim_; // 输出维度 = 输出通道数*输出h*输出w
-    int channel_axis_;
+    int channel_axis_; //属于通道的哪个轴
     int num_; //batch_size
     int channels_; // 输入图像的通道数
     int group_;//卷积组大小
