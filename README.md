@@ -4,7 +4,7 @@
 
 >update 2019.11.13
 - updated base_conv_layer.hpp
-- base_conv_layer.cpp
+- base_conv_layer.cpp （not done yet)
 
 >update 2019.11.12
 - base_conv_layer.hpp
