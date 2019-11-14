@@ -19,7 +19,7 @@ template <typename Dtype>
 class BaseConvolutionLayer : public Layer<Dtype> {
 public:
     explicit BaseConvolutionLayer(const LayerParameter & param):Layer<Dtype>(param) {}
-    //构造函数
+    //构造函数， 同时为基类Layer提供数据初始化
 
     virtual void LayerSetUp(const vector<Blob<Dtype>*> & bottom, const vector<Blob<Dtype>*> & top);
     //重写LayerSetUp方法

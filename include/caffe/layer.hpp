@@ -225,7 +225,7 @@ public:
 protected:
     LayerParameter layer_param_; //保存网络层参数, LayerParameter 是caffe.pb.h定义的类
     Phase phase_;//TRAIN = 0 or TEST = 1 Phase 定义在caffe.ph.h中是枚举
-    vector<shared_ptr<Blob<Dtype>> blobs_; //vector容器保存了learnable parameter
+    vector<shared_ptr<Blob<Dtype> > > blobs_; //vector容器保存了learnable parameter(weight and bias)
     vector<bool> param_propagate_down_;//vector index指出哪些param要计算梯度
 
     vector<Dtype> loss_; //指出是否每一个top blob都有 非0 的weight 在损失函数
