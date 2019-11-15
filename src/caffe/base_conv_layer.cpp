@@ -195,33 +195,176 @@ void BaseConvolutionLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
                        << weight_shaped_blob.shape_string() << "； instead， shape was "
                        << this->blobs_[0]->shape_string();
         }
-        if (bias_term_ && bias_shape != this->blobs_[1]->shape()){
+        if (bias_term_ && bias_shape != this->blobs_[1]->shape()) {
             Blob<Dtype> bias_shaped_blob(bias_shape);
             LOG(FATAL) << "Incorrect bias shape: expected shape "
-                << bias_shaped_blob.shape_string() << "; insted, shape was "
-                << this->blobs_[1] -> shape_string();
+                       << bias_shaped_blob.shape_string() << "; insted, shape was "
+                       << this->blobs_[1]->shape_string();
         }
         LOG(INFO) << "Skipping parameter initialization";
-    }else { //如果blobs_.size 没有大于0 也就是没有东西， 则将blobs_重新resize
-        if(bias_term_) { //如果有启用bias的话
+    } else { //如果blobs_.size 没有大于0 也就是没有东西， 则将blobs_重新resize
+        if (bias_term_) { //如果有启用bias的话
             this->blobs_.resize(2);
 
-        }else {
-            this-blobs.resize(1); //没有bias 则只给weight, resize成1个
+        } else {
+            this - blobs.resize(1); //没有bias 则只给weight, resize成1个
         }
 
         /**初始化以及填入weights**/
         // output channels x input channels per-group x kernel height x kernel width
         this->blobs_[0].reset(new Blob<Dtype>(weight_shape));
+
+
+        //创建weight_filler智能指针
+        //shared_ptr<> p1() 并且初始化 调用GetFiller函数
         shared_ptr<Filler<Dtype>> weight_filler(GetFiller<Dtype>(
                 this->layer_param_.convolution_param().weight_filler()));
         weight_filler->Fill(this->blobs_[0].get());
+        //weight_filler调用Fill， blobs_[0] 表示weight,
 
+        //如果有bias ， 初始化以及填入biases
+        if (bias_term_) {
+            this->blobs_[1].reset(new Blob<Dtype>(bias_shape));
 
+            //创建bias_filler智能指针
+            //shared_ptr<> p1() 并且初始化 调用GetFiller函数
+            shared_ptr<Filler<Dtype> > bias_filler(GetFiller<Dtype>(
+                    this->layer_param_.convolution_param().bias_filler()));
+            bias_filler->Fill(this->blobs_[1].get());
+            //blobs_[1]表示bias
 
-
-
+        }
     }
+    kernel_dim_ = this->blobs_[0]->count(1);//调用blob中的count可以计算出从index1到最后的维度相乘
+    weight_offset_ = conv_out_channels_ * kernel_dim_ / group_;
+    //？？？
+    this->param_propagate_down_.resize(this->blobs_.size(), true);
+}
+
+
+
+/*** Reshape 重写 ***/
+template <typename Dtype>
+void BaseConvolutionLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom, const vector<Blob<Dtype>*> & top) {
+    const int first_spatial_axis = channel_axis_ +1;
+
+
+    //num_axes 返回blob是多少维度， 确认维度必须相同
+    CHECK_EQ(bottom[0]->num_axes(), first_spatial_axis + num_spatial_axes_)
+        << "bottom num_axes may not changed.";
+    num_ = bottom[0]->count(0, channel_axis_); //统计输入特征图数量batch_size*channel_num
+    CHECK_EQ(bottom[0] -> shape(channel_axis_), channels_)
+    //确认传入的bottom 的通道数 与  channels_的通道数一致
+        <<"Inut size incompatbile with convolution kernel.";
+
+    // TODO: generalize to handle inputs of different shapes.
+
+    // 检查所有bottom blob形状一致
+    for(int bottom_id = 1; bottom_id < bottom.size(); ++bottom_id){
+        CHECK(bottom[0] ->shape() == bottom[bottom_id] -> shape())
+            << "shape mismatch - bottom[0]: " << bottom[0] ->shape_string()
+            <<" vs. bottom[" << bottom_id << "}:"
+            << bottom[bottom_id] ->shape_string();
+    }
+
+    // Shape the tops.根据bottom形状，计算输出top blob形状（batch_size, channel_out, out_h, out_w,...）
+    bottom_shape_ = &bottom[0]->shape();
+    compute_output_shape(); //虚函数， 需要重写来确定具体形状
+
+    //复制[begin,end)区间内另一个数组（描述bottom形状）的元素到该vector中，左闭右开，如果是blob是b*c*h*w，就只复制过来了b
+    vector<int> top_shape(bottom[0]->shape().begin(),
+            bottom[0]->shape().begin() + channel_axis_);
+    top_shape.push_back(num_output_);//num_output_添加在后
+
+
+
+    for (int i = 0; i < num_spatial_axes_; ++i) {
+        top_shape.push_back(output_shape_[i]);
+        //output_shape是输出的H, W
+    }
+
+    // 按得到的top_shape创建top blob，并调整其形状，为其开辟空间等。
+    for (int top_id = 0; top_id <top.size(); ++top_id) {
+        top[top_id] ->Reshape(top_shape);
+    }
+    // 按得到的top_shape创建top blob，并调整其形状，为其开辟空间等
+    if (reverse_dimensions()) {
+        conv_out_spatial_dim_ = bottom[0]->count(first_spatial_axis);
+    } else {
+        conv_out_spatial_dim_ = top[0]->count(first_spatial_axis);
+    }
+
+    //卷积窗口在输入“图像”上按步长滑动，形成了多个子图;然后将所有子图拉成一列，列的长度就是col_offset_。
+    //col_offset_与im2col_cpu()函数中channels_col的计算是相似的，但是值并不相等，
+    //原因在于：channels_col是将卷积层输入的通道数conv_in_channels_用于相乘，
+    //但kernel_dim_只用到了一部分channel,即conv_in_channels_/group_ 。
+    col_offset_ = kernel_dim_ * conv_out_spatial_dim_;
+    //卷积层的输出特征图也要分组，当然group_默认为1。写成(conv_out_channels_ / group_) * conv_out_spatial_dim_更直观
+    output_offset_ = conv_out_channels_ * conv_out_spatial_dim_ / group_;
+
+    //Setup input dimensions(conv_input_shape_)
+    vector<int> bottom_dim_blob_shape(1, num_spatial_axes_ + 1);
+    conv_input_shape_.Reshape(bottom_dim_blob_shape);
+
+    int * conv_input_shape_data = conv_input_shape_.mutable_cpu_data();
+    for (int i = 0; i < num_spatial_axes_ +1; ++i) {
+        if(reverse_dimensions()) {
+            conv_input_shape_data[i] = top[0] ->shape(channel_axis_ +i);
+        } else {
+            conv_input_shape_data[i] = bottom[0]->shape(channel_axis_ + i);
+        }
+    }
+
+    // The im2col result buffer will only hold one image at a time to avoid
+    // overly large memory usage. In the special case of 1x1 convolution
+    // it goes lazily unused to save memory.
+    col_buffer_shape_.clear();
+    col_buffer_shape_.push_back(kernel_dim_ * group_);
+    for (int i = 0; i < num_spatial_axes_; ++i) {
+        if (reverse_dimensions()) {
+            col_buffer_shape_.push_back(input_shape(i + 1));
+        } else {
+            col_buffer_shape_.push_back(output_shape_[i]);
+        }
+    }
+    col_buffer_.Reshape(col_buffer_shape_);
+    bottom_dim_ = bottom[0]->count(channel_axis_);
+    top_dim_ = top[0]->count(channel_axis_);
+    num_kernels_im2col_ = conv_in_channels_ * conv_out_spatial_dim_;
+    num_kernels_col2im_ = reverse_dimensions() ? top_dim_ : bottom_dim_;
+    // Set up the all ones "bias multiplier" for adding biases by BLAS
+    out_spatial_dim_ = top[0]->count(first_spatial_axis);
+    if (bias_term_) {
+        vector<int> bias_multiplier_shape(1, out_spatial_dim_);
+        bias_multiplier_.Reshape(bias_multiplier_shape);
+        caffe_set(bias_multiplier_.count(), Dtype(1),
+                  bias_multiplier_.mutable_cpu_data());
+    }
+} //close Reshape
+
+template <typename Dtype>
+void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
+        const Dtype* weights, Dtype*output, bool skip_im2col){
+    const Dtype* col_buff = input;
+    if(!is_1x1_) {
+        if (!skip_im2col) {
+            conv_im2col_cpu(input, col_buffer_.mutable_cpu_data())
+        }
+        col_buff = col_buffer_.cpu_data();
+    }
+    for (int g=0; g<group_; ++g){
+        caffe_cpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans, num_output_,
+                              out_spatial_dim, 1, (Dtype)1., )
+    }
+
+
+}
+
+
+
+
+
+
 
 
 
