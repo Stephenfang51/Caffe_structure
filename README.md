@@ -1,6 +1,10 @@
 # Caffe_structure
 
 具体了解Caffe 框架的结构及C++语法使用, 所有注释都在代码中， 相关大类的图表也在structure diagram中
+>update 2019.11.16
+- updated base_conv_layer.cpp
+- update base_conv_layer.hpp 修改
+
 
 >update 2019.11.15
 - updated base_conv_layer.cpp (not done yet)

@@ -342,42 +342,179 @@ void BaseConvolutionLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom, co
     }
 } //close Reshape
 
+
+/**
+ *
+ * 前向传播 cpu 矩阵相乘, 主要处理weight 与输入矩阵的乘法*
+ * forward_cpu_gemm完成的主要操作为 将input 进行im2col变换，
+ * 得到col_buffer_, 然后与weights相乘，得到的结果存放在output中
+ *
+ * */
+
 template <typename Dtype>
 void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
         const Dtype* weights, Dtype*output, bool skip_im2col){
     const Dtype* col_buff = input;
+
+    //如果非1x1和省略im2col的话
     if(!is_1x1_) {
         if (!skip_im2col) {
-            conv_im2col_cpu(input, col_buffer_.mutable_cpu_data())
+            conv_im2col_cpu(input, col_buffer_.mutable_cpu_data());
         }
         col_buff = col_buffer_.cpu_data();
     }
+
     for (int g=0; g<group_; ++g){
-        caffe_cpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans, num_output_,
-                              out_spatial_dim, 1, (Dtype)1., )
+        caffe_cpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans, conv_out_channels_ /
+        group_, conv_out_spatial_dim_, kernel_dim_,
+        (Dtype)1, weights +weight_offset_ * g, col_buff + col_offset_ * g,
+        (Dtype)0., output + output_offset_ * g);
+    //前面两个CblasNoTrans 表示A和B都不需要转置
+    //conv_out_channels_ / group_ 表示A和C矩阵的行数 也就是M， group_ 默认为1
+    //conv_out_spatial_dim_ 表示B和C的列数 也就是N
+    //kernel_dim_ 表示A的列及B的行
+    //Dtype 1. 为alpha
+    //Dtype 0. 为beta 表示公式为 C = A*B
+    //weight + weight_offset_ * g = 矩阵A
+    //col_buff + col_offset_ * g = 矩阵B
+    //output + output_offset_ * g = 矩阵C
+
+    //在这个函数中，weight_offset_ = channels*卷积核个数*卷积核width*卷积核height，
+    // col_offset_的值就是我在im2col_cpu中计算的data_col的大小，
+    // output_offset_ = 卷积核个数*卷积后的图片宽度*卷积后的图片长度。
     }
+}
 
-
+template <typename Dtype>
+void BaseConvolutionLayer<Dtype>::forward_cpu_bias(Dtype* output,
+                                                   const Dtype* bias) {
+    caffe_cpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans, num_output_,
+                          out_spatial_dim_, 1, (Dtype)1., bias, bias_multiplier_.cpu_data(),
+                          (Dtype)1., output);
 }
 
 
 
+template <typename Dtype>
+void BaseConvolutionLayer<Dtype>::backward_cpu_gemm(const Dtype *input,
+        const Dtype *weights, Dtype *output) {
+    Dtype* col_buff = col_buffer_.mutable_cpu_data(); //col_buffer_ 为 im2col函数产出的列向量
+
+    if (is_1x1_) {
+        col_buff = input; //如果是1x1卷积的话， 做了im2col之跟Input都是一样的， 所有省略im2col直接赋值input
+    }
+    for (int g = 0; g<group_; ++g) {
+        caffe_cpu_gemm<Dtype>(CblasTrans, CblasNoTrans, kernel_dim_,
+                conv_out_spatital_dim_, conv_out_channels_ / group_,
+                (Dtype)1., weigths + weight_offset_ *g, output _ output_offset_ * g),
+                (Dtype)0., col_buff + col_offset_ * g);
+    }
+
+    if (!is_1x1_){
+        conv_col2im_cpu(col_buff, input); //如果不是1x1卷积， 就直接im2col， 将列向量与input相乘
+    }
+
+}
+
+/**
+ * 反向传播计算关于权重的导数用于更新权重
+ * **/
+template <typename Dtype>
+void BaseConvolutionLayer<Dtype>::weight_cpu_gemm(const Dtype * input,
+        const Dtype* output, Dtype* weights){
+    const Dtype * col_buff = input;
+    if (!is_1x1_) {
+        conv_im2col_cpu(input, col_buffer_.mutable_cpu_data());
+        col_buff = col_buffer_.cpu_data();
+    }
+    for (int g = 0; g <group_; ++g) {
+        caffe_cpu_gemm<Dtype>(CblasNoTrans, CblasTrans, conv_out_channels_ / group_,
+                kernel_dim_, conv_out_spatial_dim_,
+                (Dtype)1., output + output_offset_ * g, col_buff + col_offset_ * g,
+                (Dtype)1., weights + weight_offset_ * g);
+    }
+}
+
+template <typename Dtype>
+void BaseConvolutionLayer<Dtype>::backward_cpu_bias(Dtype* bias,
+                                                    const Dtype* input) {
+    caffe_cpu_gemv<Dtype>(CblasNoTrans, num_output_, out_spatial_dim_, 1.,
+                          input, bias_multiplier_.cpu_data(), 1., bias);
+}
+
+#ifndef CPU_ONLY
+
+template <typename Dtype>
+void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
+        const Dtype* weights, Dtype*output, bool skip_im2col) {
+    const Dtype* col_buff = input;
+    if(!is_1x1_) {
+        if(!skip_im2col) {
+            conv_im2col_gpu(input, col_buffer_.mutable_gpu_data());
+        }
+        col_buff = col_buffer_.gpu_data();
+    }
+    for (int g = 0; g<group_; ++g){
+        caffe_gpu_gemm<Dtype>(CblasNoTran, CblasNoTrans, conv_out_channels_ /
+        group_, conv_out_spatial_dim_, kernel_dim_, (Dtype)1.,
+        weights + weight_offset_ * g, col_buff + col_offset_ * g,
+                (Dtype)0., output + output_offset_ * g);
+    }
+}
+
+template <typename Dtype>
+void BaseConvolutionLayer<Dtype>::forward_gpu_bias(Dtype* output,
+                                                   const Dtype* bias) {
+    caffe_gpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans, num_output_,
+                          out_spatial_dim_, 1, (Dtype)1., bias, bias_multiplier_.gpu_data(),
+                          (Dtype)1., output);
+}
+
+template <typename Dtype>
+void BaseConvolutionLayer<Dtype>::backward_gpu_gemm(const Dtype* output,
+                                                    const Dtype* weights, Dtype* input) {
+    Dtype* col_buff = col_buffer_.mutable_gpu_data();
+    if (is_1x1_) {
+        col_buff = input;
+    }
+    for (int g = 0; g < group_; ++g) {
+        caffe_gpu_gemm<Dtype>(CblasTrans, CblasNoTrans, kernel_dim_,
+                              conv_out_spatial_dim_, conv_out_channels_ / group_,
+                              (Dtype)1., weights + weight_offset_ * g, output + output_offset_ * g,
+                              (Dtype)0., col_buff + col_offset_ * g);
+    }
+    if (!is_1x1_) {
+        conv_col2im_gpu(col_buff, input);
+    }
+}
+
+template <typename Dtype>
+void BaseConvolutionLayer<Dtype>::weight_gpu_gemm(const Dtype* input,
+                                                  const Dtype* output, Dtype* weights) {
+    const Dtype* col_buff = input;
+    if (!is_1x1_) {
+        conv_im2col_gpu(input, col_buffer_.mutable_gpu_data());
+        col_buff = col_buffer_.gpu_data();
+    }
+    for (int g = 0; g < group_; ++g) {
+        caffe_gpu_gemm<Dtype>(CblasNoTrans, CblasTrans, conv_out_channels_ / group_,
+                              kernel_dim_, conv_out_spatial_dim_,
+                              (Dtype)1., output + output_offset_ * g, col_buff + col_offset_ * g,
+                              (Dtype)1., weights + weight_offset_ * g);
+    }
+}
 
 
+template <typename Dtype>
+void BaseConvolutionLayer<Dtype>::backward_gpu_bias(Dtype* bias,
+                                                    const Dtype* input) {
+    caffe_gpu_gemv<Dtype>(CblasNoTrans, num_output_, out_spatial_dim_, 1.,
+                          input, bias_multiplier_.gpu_data(), 1., bias);
+}
 
+#endif // CPU_ONLY
 
+INSTANTIATE_CLASS(BaseConvolutionLayer);
 
-
-
-
-
-
-
-
-
-
-
-
-}//LayerSetUp close
 
 }//namespace caffe close

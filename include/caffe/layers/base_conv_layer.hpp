@@ -79,12 +79,12 @@ protected:
     int num_spatial_axes_; //空间轴的数量 H and W就是2个
     int bottom_dim_; // 输入度维度 = 输入图像通道数*输入图像的h*输入图像w
     int top_dim_; // 输出维度 = 输出通道数*输出h*输出w
-    int channel_axis_; //属于通道的哪个轴
+    int channel_axis_; //通道的轴
     int num_; //batch_size
     int channels_; // 输入图像的通道数
     int group_;//卷积组大小
     int out_spatial_dim_;  // 输出空间维度 = 卷积之后的图像长*卷积之后图像的宽
-    int weight_offset_;
+    int weight_offset_; //channels*卷积核个数*卷积核width*卷积核height
     int num_output_;// 卷积后的图像的通道数
     bool bias_term_;// 是否启用偏置
     bool is_1x1_;// 是不是1x1卷积
@@ -101,7 +101,7 @@ protected:
 //dilation_h / dilation_w 空洞卷积 一般卷积时 为1
 //data_col 输出矩阵数
 
-    private:
+private:
     inline void conv_im2col_cpu(const Dtype* data, Dtype* col_buff) {
         if(!force_nd_im2col_ && num_spatial_axes_ == 2 ) {
             //调用im2col_cpu function （from im2col.hpp)
@@ -112,7 +112,7 @@ protected:
             stride_.cpu_data()[0], stride_.cpu_data()[1],
             dilation_.cpu_data()[0], dilation_.cpu_data()[1], col_buff);
         }
-        else{
+        else{ //2维以上的卷积
             im2col_nd_cpu(data, num_spatial_axes_, conv_input_shape_.cpu_data(),
                     col_buffer_shape_.data(), kernel_shape_.cpu_data(), pad_.cpu_data(),
                     stride_.cpu_data(), dilation_.cpu_data(), col_buff);
@@ -183,7 +183,7 @@ inline void conv_col2im_gpu(const Dtype* col_buff, Dtype* data) {
         int kernel_dim_; // 卷积核的维度 = 输入图像的维度*卷积核的h*卷积核的w
         // 在使用gropu参数的时候使用的offset
         int col_offset_;
-        int output_offset_;
+        int output_offset_; //卷积核个数*卷积后的图片宽度*卷积后的图片长度。
 
         Blob<Dtype> col_buffer_;// im2col的时候使用的存储空间
         Blob<Dtype> bias_multiplier_;
