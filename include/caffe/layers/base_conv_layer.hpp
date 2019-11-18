@@ -84,7 +84,7 @@ protected:
     int channels_; // 输入图像的通道数
     int group_;//卷积组大小
     int out_spatial_dim_;  // 输出空间维度 = 卷积之后的图像长*卷积之后图像的宽
-    int weight_offset_; //channels*卷积核个数*卷积核width*卷积核height
+    int weight_offset_; //channels*卷积核个数*卷积核w*卷积核h
     int num_output_;// 卷积后的图像的通道数
     bool bias_term_;// 是否启用偏置
     bool is_1x1_;// 是不是1x1卷积
@@ -183,7 +183,7 @@ inline void conv_col2im_gpu(const Dtype* col_buff, Dtype* data) {
         int kernel_dim_; // 卷积核的维度 = 输入图像的维度*卷积核的h*卷积核的w
         // 在使用gropu参数的时候使用的offset
         int col_offset_;
-        int output_offset_; //卷积核个数*卷积后的图片宽度*卷积后的图片长度。
+        int output_offset_; //卷积核个数*卷积后图像h*卷积后图像w CHW
 
         Blob<Dtype> col_buffer_;// im2col的时候使用的存储空间
         Blob<Dtype> bias_multiplier_;

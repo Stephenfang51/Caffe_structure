@@ -237,7 +237,8 @@ void BaseConvolutionLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
     }
     kernel_dim_ = this->blobs_[0]->count(1);//调用blob中的count可以计算出从index1到最后的维度相乘
     weight_offset_ = conv_out_channels_ * kernel_dim_ / group_;
-    //？？？
+    //kernel_dim_ = A的列与B的行
+    //conv_out_channels = 输出图像的通道数
     this->param_propagate_down_.resize(this->blobs_.size(), true);
 }
 
@@ -297,10 +298,10 @@ void BaseConvolutionLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom, co
     //卷积窗口在输入“图像”上按步长滑动，形成了多个子图;然后将所有子图拉成一列，列的长度就是col_offset_。
     //col_offset_与im2col_cpu()函数中channels_col的计算是相似的，但是值并不相等，
     //原因在于：channels_col是将卷积层输入的通道数conv_in_channels_用于相乘，
-    //但kernel_dim_只用到了一部分channel,即conv_in_channels_/group_ 。
+    //但kernel_dim_只用到了一部分channel,也就是分组卷积，conv_in_channels_/group_ 。
     col_offset_ = kernel_dim_ * conv_out_spatial_dim_;
     //卷积层的输出特征图也要分组，当然group_默认为1。写成(conv_out_channels_ / group_) * conv_out_spatial_dim_更直观
-    output_offset_ = conv_out_channels_ * conv_out_spatial_dim_ / group_;
+    output_offset_ = conv_out_channels_ * conv_out_spatial_dim_ / group_; // C*H*W/group_
 
     //Setup input dimensions(conv_input_shape_)
     vector<int> bottom_dim_blob_shape(1, num_spatial_axes_ + 1);
@@ -370,14 +371,14 @@ void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
         (Dtype)1, weights +weight_offset_ * g, col_buff + col_offset_ * g,
         (Dtype)0., output + output_offset_ * g);
     //前面两个CblasNoTrans 表示A和B都不需要转置
-    //conv_out_channels_ / group_ 表示A和C矩阵的行数 也就是M， group_ 默认为1
+    //conv_out_channels_ / group_ 表示A和C矩阵的行数row,  也就是M， group_ 默认为1
     //conv_out_spatial_dim_ 表示B和C的列数 也就是N
     //kernel_dim_ 表示A的列及B的行
     //Dtype 1. 为alpha
     //Dtype 0. 为beta 表示公式为 C = A*B
-    //weight + weight_offset_ * g = 矩阵A
-    //col_buff + col_offset_ * g = 矩阵B
-    //output + output_offset_ * g = 矩阵C
+    //weight + weight_offset_ * g = 矩阵A, weight是指针 [MxK]
+    //col_buff + col_offset_ * g = 矩阵B col_buff是指针 [KxN]
+    //output + output_offset_ * g = 矩阵C output 是指针 [MxN]
 
     //在这个函数中，weight_offset_ = channels*卷积核个数*卷积核width*卷积核height，
     // col_offset_的值就是我在im2col_cpu中计算的data_col的大小，
