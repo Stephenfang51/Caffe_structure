@@ -429,6 +429,7 @@ void BaseConvolutionLayer<Dtype>::weight_cpu_gemm(const Dtype * input,
         col_buff = col_buffer_.cpu_data();
     }
     for (int g = 0; g <group_; ++g) {
+        //注意到weight_cpu_gemm 是有矩阵转置的
         caffe_cpu_gemm<Dtype>(CblasNoTrans, CblasTrans, conv_out_channels_ / group_,
                 kernel_dim_, conv_out_spatial_dim_,
                 (Dtype)1., output + output_offset_ * g, col_buff + col_offset_ * g,
